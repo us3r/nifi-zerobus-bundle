@@ -156,10 +156,8 @@ public class PutZerobusIngest extends AbstractProcessor {
 
         getLogger().info("Opening Zerobus stream to table {} via {}", new Object[]{table, endpoint});
 
-        // Set the NAR classloader as context classloader so that SDK-spawned threads
-        // (gRPC, callbacks) can find Zerobus classes via Thread.getContextClassLoader()
-        final ClassLoader narClassLoader = this.getClass().getClassLoader();
-        Thread.currentThread().setContextClassLoader(narClassLoader);
+        // Set NAR classloader as TCCL for SDK thread inheritance where possible
+        Thread.currentThread().setContextClassLoader(this.getClass().getClassLoader());
 
         sdk = new ZerobusSdk(endpoint, workspace);
 

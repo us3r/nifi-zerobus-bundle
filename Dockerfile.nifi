@@ -1,2 +1,14 @@
 FROM apache/nifi:1.28.1
+
 COPY nifi-zerobus-nar/target/nifi-zerobus-nar-0.1.0.nar /opt/nifi/nifi-current/lib/
+
+# The Zerobus SDK uses JNI (Rust→Java callbacks). Native threads created via
+# JNI AttachCurrentThread use the system classloader, which cannot see classes
+# inside the NAR. Place the SDK JAR on NiFi's system classpath (lib/) so that
+# all classloaders can resolve Zerobus classes like NonRetriableException.
+USER root
+RUN unzip -j /opt/nifi/nifi-current/lib/nifi-zerobus-nar-0.1.0.nar \
+      META-INF/bundled-dependencies/zerobus-ingest-sdk-0.2.0.jar \
+      -d /opt/nifi/nifi-current/lib/ && \
+    chown nifi:nifi /opt/nifi/nifi-current/lib/zerobus-ingest-sdk-0.2.0.jar
+USER nifi
