@@ -47,8 +47,7 @@ public class PutZerobusIngest extends AbstractProcessor {
             .name("zerobus-server-endpoint")
             .displayName("Zerobus Server Endpoint")
             .description(
-                "Zerobus server endpoint in the format: <workspace-id>.zerobus.<region>.cloud.databricks.com. "
-                + "Do not include the https:// prefix."
+                "Zerobus server endpoint URL, e.g. https://<workspace-id>.zerobus.<region>.cloud.databricks.com"
             )
             .required(true)
             .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
