@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>la.dere.nifi</groupId>
+    <artifactId>nifi-zerobus-bundle</artifactId>
+    <version>0.1.0</version>
+    <packaging>pom</packaging>
+
+    <name>NiFi Zerobus Ingest Bundle</name>
+    <description>Apache NiFi processor for streaming data into Databricks Delta tables via Zerobus Ingest</description>
+    <url>https://github.com/us3r/nifi-zerobus-bundle</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <name>Mariusz</name>
+            <url>https://dere.la</url>
+        </developer>
+    </developers>
+
+    <modules>
+        <module>nifi-zerobus-processors</module>
+        <module>nifi-zerobus-nar</module>
+    </modules>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <nifi.version>1.28.1</nifi.version>
+        <zerobus.sdk.version>0.2.0</zerobus.sdk.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.apache.nifi</groupId>
+                <artifactId>nifi-api</artifactId>
+                <version>${nifi.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.nifi</groupId>
+                <artifactId>nifi-utils</artifactId>
+                <version>${nifi.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.databricks</groupId>
+                <artifactId>zerobus-ingest-sdk</artifactId>
+                <version>${zerobus.sdk.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>
