@@ -1,0 +1,2 @@
+FROM apache/nifi:1.28.1
+COPY nifi-zerobus-nar/target/nifi-zerobus-nar-0.1.0.nar /opt/nifi/nifi-current/lib/
