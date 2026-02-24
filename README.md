@@ -38,13 +38,19 @@ cp nifi-zerobus-nar/target/nifi-zerobus-nar-0.1.0.nar $NIFI_HOME/lib/
 $NIFI_HOME/bin/nifi.sh restart
 ```
 
-On Kubernetes:
+On Kubernetes (recommended — bake into image):
+
+```dockerfile
+FROM apache/nifi:1.28.1
+COPY nifi-zerobus-nar-0.1.0.nar /opt/nifi/nifi-current/lib/
+```
 
 ```bash
-kubectl cp nifi-zerobus-nar/target/nifi-zerobus-nar-0.1.0.nar \
-  <namespace>/<nifi-pod>:/opt/nifi/nifi-current/lib/
-kubectl -n <namespace> exec <nifi-pod> -- /opt/nifi/nifi-current/bin/nifi.sh restart
+docker build -t nifi-zerobus:1.28.1 .
+kubectl -n <namespace> set image deployment/nifi nifi=nifi-zerobus:1.28.1
 ```
+
+> **Apple Silicon (ARM64):** The Zerobus SDK ships native libraries for `linux-x86_64` only. On ARM64 hosts (OrbStack, Rancher Desktop on Apple Silicon), you must build the image with `--platform linux/amd64` and enable Rosetta emulation in your container runtime. Without this, the processor will fail with `UnsatisfiedLinkError: libzerobus_jni.so`. Production x86_64 clusters are unaffected.
 
 ## Configuration
 
