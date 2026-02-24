@@ -97,6 +97,8 @@ GRANT USE SCHEMA ON SCHEMA catalog.schema TO `sp-nifi`;
 GRANT MODIFY, SELECT ON TABLE catalog.schema.security_events TO `sp-nifi`;
 ```
 
+> **Important:** Zerobus Ingest requires **explicit** `MODIFY` and `SELECT` grants on the target table. `ALL_PRIVILEGES` inherited from a parent catalog or schema is **not sufficient** — the Zerobus OAuth token request uses fine-grained `authorization_details` scoping that only recognizes direct table-level grants. Without them, you'll get a `401: User is not authorized to the requested authorizations` error even if the service principal appears to have full access.
+
 3. **Find your Zerobus endpoint:**
 
 ```
