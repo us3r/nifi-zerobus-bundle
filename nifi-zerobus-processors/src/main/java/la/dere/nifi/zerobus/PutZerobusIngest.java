@@ -157,6 +157,11 @@ public class PutZerobusIngest extends AbstractProcessor {
 
         getLogger().info("Opening Zerobus stream to table {} via {}", new Object[]{table, endpoint});
 
+        // Set the NAR classloader as context classloader so that SDK-spawned threads
+        // (gRPC, callbacks) can find Zerobus classes via Thread.getContextClassLoader()
+        final ClassLoader narClassLoader = this.getClass().getClassLoader();
+        Thread.currentThread().setContextClassLoader(narClassLoader);
+
         sdk = new ZerobusSdk(endpoint, workspace);
 
         StreamConfigurationOptions options = StreamConfigurationOptions.builder()
@@ -195,6 +200,8 @@ public class PutZerobusIngest extends AbstractProcessor {
 
     @Override
     public void onTrigger(final ProcessContext context, final ProcessSession session) throws ProcessException {
+        Thread.currentThread().setContextClassLoader(this.getClass().getClassLoader());
+
         final int batchSize = context.getProperty(BATCH_SIZE).asInteger();
 
         List<FlowFile> flowFiles = session.get(batchSize);
