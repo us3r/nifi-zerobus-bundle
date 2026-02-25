@@ -54,15 +54,25 @@ kubectl -n <namespace> set image deployment/nifi nifi=nifi-zerobus:1.28.1
 
 ## Configuration
 
-| Property | Required | Description |
-|----------|----------|-------------|
-| **Zerobus Server Endpoint** | Yes | `<workspace-id>.zerobus.<region>.cloud.databricks.com` |
-| **Workspace URL** | Yes | `https://dbc-xxxx.cloud.databricks.com` |
-| **Target Table** | Yes | `catalog.schema.table` |
-| **Service Principal Client ID** | Yes | OAuth 2.0 client ID |
-| **Service Principal Client Secret** | Yes | OAuth 2.0 client secret (sensitive) |
-| Batch Size | No | FlowFiles per ingest call (default: 100) |
-| Max Inflight Records | No | Backpressure threshold (default: 10000) |
+| Property | Required | Default | Description |
+|----------|----------|---------|-------------|
+| **Zerobus Server Endpoint** | Yes | — | `<workspace-id>.zerobus.<region>.cloud.databricks.com` |
+| **Workspace URL** | Yes | — | `https://dbc-xxxx.cloud.databricks.com` |
+| **Target Table** | Yes | — | `catalog.schema.table` |
+| **Service Principal Client ID** | Yes | — | OAuth 2.0 client ID |
+| **Service Principal Client Secret** | Yes | — | OAuth 2.0 client secret (sensitive) |
+| Batch Size | No | 100 | FlowFiles per ingest call |
+| Max Inflight Records | No | 10000 | Backpressure threshold |
+| ACK Wait Timeout | No | 30 sec | Max time to wait for server acknowledgment per batch |
+| Max FlowFile Size | No | 1 MB | Oversized FlowFiles are routed to failure. Caps heap usage. |
+
+## Data Format
+
+The processor accepts JSON FlowFiles (one JSON object or array per FlowFile). A basic structural check (starts/ends with `{}`/`[]`) catches obviously-not-JSON content before it reaches the server. The Zerobus server validates records against the Delta table schema — schema mismatches are routed to `failure`.
+
+> **Note:** The Zerobus SDK also supports Protocol Buffers via `ZerobusProtoStream`. This processor currently uses the JSON stream. If you need Protobuf ingestion (higher throughput, stricter typing), open an issue or PR.
+
+For non-JSON sources, use NiFi's `ConvertRecord` processor upstream to transform to JSON first.
 
 ## Example Flow
 
