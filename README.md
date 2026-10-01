@@ -16,7 +16,7 @@ Features:
 
 ## Requirements
 
-- Apache NiFi 2.9.0 (for NiFi 1.x use the `main` branch)
+- Apache NiFi 2.12.0 (for NiFi 1.x use the `main` branch)
 - Java 21+
 - Databricks workspace with Zerobus Ingest enabled
 - Service principal with `MODIFY` + `SELECT` on the target table
@@ -27,27 +27,27 @@ Features:
 mvn clean package -DskipTests
 ```
 
-The NAR file will be at `nifi-zerobus-nar/target/nifi-zerobus-nar-2.9.0.nar`.
+The NAR file will be at `nifi-zerobus-nar/target/nifi-zerobus-nar-2.12.0.nar`.
 
 ## Install
 
 Copy the NAR to NiFi's `lib/` directory and restart:
 
 ```bash
-cp nifi-zerobus-nar/target/nifi-zerobus-nar-2.9.0.nar $NIFI_HOME/lib/
+cp nifi-zerobus-nar/target/nifi-zerobus-nar-2.12.0.nar $NIFI_HOME/lib/
 $NIFI_HOME/bin/nifi.sh restart
 ```
 
 On Kubernetes (recommended — bake into image):
 
 ```dockerfile
-FROM apache/nifi:2.9.0
-COPY nifi-zerobus-nar-2.9.0.nar /opt/nifi/nifi-current/lib/
+FROM apache/nifi:2.12.0
+COPY nifi-zerobus-nar-2.12.0.nar /opt/nifi/nifi-current/lib/
 ```
 
 ```bash
-docker build -t nifi-zerobus:2.9.0 .
-kubectl -n <namespace> set image deployment/nifi nifi=nifi-zerobus:2.9.0
+docker build -t nifi-zerobus:2.12.0 .
+kubectl -n <namespace> set image deployment/nifi nifi=nifi-zerobus:2.12.0
 ```
 
 > **Arrow needs a JVM flag:** `PutZerobusRecord` uses Apache Arrow, which requires reflective access to `java.nio` on Java 21. Add this line to `conf/bootstrap.conf` (the bundled `Dockerfile.nifi` does it for you), otherwise the processor refuses to start:

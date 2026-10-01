@@ -2,9 +2,9 @@ name: Build
 
 on:
   push:
-    branches: [main, nifi-2.9.0]
+    branches: [main, nifi-2.12.0]
   pull_request:
-    branches: [main, nifi-2.9.0]
+    branches: [main, nifi-2.12.0]
 
 jobs:
   build:
