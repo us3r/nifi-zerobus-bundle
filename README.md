@@ -27,14 +27,14 @@ Features:
 mvn clean package -DskipTests
 ```
 
-The NAR file will be at `nifi-zerobus-nar/target/nifi-zerobus-nar-0.1.0.nar`.
+The NAR file will be at `nifi-zerobus-nar/target/nifi-zerobus-nar-2.9.0.nar`.
 
 ## Install
 
 Copy the NAR to NiFi's `lib/` directory and restart:
 
 ```bash
-cp nifi-zerobus-nar/target/nifi-zerobus-nar-0.1.0.nar $NIFI_HOME/lib/
+cp nifi-zerobus-nar/target/nifi-zerobus-nar-2.9.0.nar $NIFI_HOME/lib/
 $NIFI_HOME/bin/nifi.sh restart
 ```
 
@@ -42,7 +42,7 @@ On Kubernetes (recommended — bake into image):
 
 ```dockerfile
 FROM apache/nifi:2.9.0
-COPY nifi-zerobus-nar-0.1.0.nar /opt/nifi/nifi-current/lib/
+COPY nifi-zerobus-nar-2.9.0.nar /opt/nifi/nifi-current/lib/
 ```
 
 ```bash

@@ -1,6 +1,6 @@
 FROM apache/nifi:2.9.0
 
-COPY nifi-zerobus-nar/target/nifi-zerobus-nar-0.1.0.nar /opt/nifi/nifi-current/lib/
+COPY nifi-zerobus-nar/target/nifi-zerobus-nar-2.9.0.nar /opt/nifi/nifi-current/lib/
 
 # PutZerobusRecord uses Apache Arrow, which needs reflective access to java.nio
 # internals for its off-heap buffers. Without this flag the processor refuses to start.
