@@ -2,16 +2,16 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, nifi-2.9.0]
   pull_request:
-    branches: [main]
+    branches: [main, nifi-2.9.0]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        java: [11, 17]
+        java: [21]
 
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +27,7 @@ jobs:
         run: mvn clean verify
 
       - name: Upload NAR artifact
-        if: matrix.java == 11
+        if: matrix.java == 21
         uses: actions/upload-artifact@v4
         with:
           name: nifi-zerobus-nar

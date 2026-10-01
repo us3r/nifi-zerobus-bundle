@@ -16,8 +16,8 @@ Features:
 
 ## Requirements
 
-- Apache NiFi 1.20+
-- Java 11+
+- Apache NiFi 2.9.0 (for NiFi 1.x use the `main` branch)
+- Java 21+
 - Databricks workspace with Zerobus Ingest enabled
 - Service principal with `MODIFY` + `SELECT` on the target table
 
@@ -41,16 +41,16 @@ $NIFI_HOME/bin/nifi.sh restart
 On Kubernetes (recommended — bake into image):
 
 ```dockerfile
-FROM apache/nifi:1.28.1
+FROM apache/nifi:2.9.0
 COPY nifi-zerobus-nar-0.1.0.nar /opt/nifi/nifi-current/lib/
 ```
 
 ```bash
-docker build -t nifi-zerobus:1.28.1 .
-kubectl -n <namespace> set image deployment/nifi nifi=nifi-zerobus:1.28.1
+docker build -t nifi-zerobus:2.9.0 .
+kubectl -n <namespace> set image deployment/nifi nifi=nifi-zerobus:2.9.0
 ```
 
-> **Apple Silicon (ARM64):** The Zerobus SDK ships native libraries for `linux-x86_64` only. On ARM64 hosts (OrbStack, Rancher Desktop on Apple Silicon), you must build the image with `--platform linux/amd64` and enable Rosetta emulation in your container runtime. Without this, the processor will fail with `UnsatisfiedLinkError: libzerobus_jni.so`. Production x86_64 clusters are unaffected.
+> **ARM64 (Apple Silicon, Graviton):** Zerobus SDK 1.6.0 ships native libraries for `linux-x86_64` and `linux-aarch64` (glibc and musl), so the image runs natively on both architectures — no `--platform linux/amd64` or Rosetta emulation needed.
 
 ## Configuration
 

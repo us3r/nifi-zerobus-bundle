@@ -2,7 +2,6 @@ package la.dere.nifi.zerobus;
 
 import com.databricks.zerobus.AckCallback;
 import com.databricks.zerobus.NonRetriableException;
-import com.databricks.zerobus.StreamConfigurationOptions;
 import com.databricks.zerobus.ZerobusJsonStream;
 import com.databricks.zerobus.ZerobusSdk;
 
@@ -196,6 +195,9 @@ public class PutZerobusIngest extends AbstractProcessor {
         RELATIONSHIPS = Collections.unmodifiableSet(rels);
     }
 
+    // Appended to the SDK's user-agent so Databricks can tell who is calling
+    private static final String APPLICATION_NAME = "nifi-zerobus";
+
     // Guards stream lifecycle: create, recreate, close.
     // onTrigger grabs a local reference under this lock, then releases it
     // before the actual I/O — so we don't hold the lock during network calls.
@@ -243,36 +245,40 @@ public class PutZerobusIngest extends AbstractProcessor {
         final ClassLoader original = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(this.getClass().getClassLoader());
         try {
-            sdk = new ZerobusSdk(endpoint, workspace);
+            sdk = new ZerobusSdk(endpoint, workspace, APPLICATION_NAME);
 
-            StreamConfigurationOptions options = StreamConfigurationOptions.builder()
-                    .setMaxInflightRecords(maxInflight)
-                    .setRecovery(true)
-                    .setRecoveryRetries(5)
-                    .setRecoveryTimeoutMs(30000)
-                    .setRecoveryBackoffMs(3000)
-                    .setAckCallback(new AckCallback() {
-                        @Override
-                        public void onAck(long offsetId) {
-                            // Stream recovered (if there was an error) — clear the flag
-                            lastAsyncError.set(null);
-                            getLogger().debug("Zerobus ACK for offset {}", new Object[]{offsetId});
-                        }
+            final AckCallback ackCallback = new AckCallback() {
+                @Override
+                public void onAck(long offsetId) {
+                    // Stream recovered (if there was an error) — clear the flag
+                    lastAsyncError.set(null);
+                    getLogger().debug("Zerobus ACK for offset {}", new Object[]{offsetId});
+                }
 
-                        @Override
-                        public void onError(long offsetId, String message) {
-                            // Stash the error for onTrigger to pick up.
-                            // A smoke detector that only writes to a journal
-                            // protects nobody — so we surface this proactively.
-                            lastAsyncError.set("offset=" + offsetId + ": " + message);
-                            getLogger().warn("Zerobus async error for offset {}: {}",
-                                    new Object[]{offsetId, message});
-                        }
-                    })
-                    .build();
+                @Override
+                public void onError(long offsetId, String message) {
+                    // Stash the error for onTrigger to pick up.
+                    // A smoke detector that only writes to a journal
+                    // protects nobody — so we surface this proactively.
+                    lastAsyncError.set("offset=" + offsetId + ": " + message);
+                    getLogger().warn("Zerobus async error for offset {}: {}",
+                            new Object[]{offsetId, message});
+                }
+            };
 
             synchronized (streamLock) {
-                stream = sdk.createJsonStream(table, clientId, clientSecret, options).join();
+                stream = sdk.streamBuilder()
+                        .table(table)
+                        .oauth(clientId, clientSecret)
+                        .maxInflightRecords(maxInflight)
+                        .recovery(true)
+                        .recoveryRetries(5)
+                        .recoveryTimeoutMs(30000)
+                        .recoveryBackoffMs(3000)
+                        .ackCallback(ackCallback)
+                        .json()
+                        .build()
+                        .join();
             }
             lastAsyncError.set(null);
             getLogger().info("Zerobus stream opened successfully to {}", new Object[]{table});

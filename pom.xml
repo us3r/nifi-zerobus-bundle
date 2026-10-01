@@ -34,10 +34,11 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>11</maven.compiler.source>
-        <maven.compiler.target>11</maven.compiler.target>
-        <nifi.version>1.28.1</nifi.version>
-        <zerobus.sdk.version>0.2.0</zerobus.sdk.version>
+        <maven.compiler.release>21</maven.compiler.release>
+        <nifi.version>2.9.0</nifi.version>
+        <!-- nifi-api is released separately since NiFi 2.x; NiFi 2.9.0 ships nifi-api 2.8.0 -->
+        <nifi-api.version>2.8.0</nifi-api.version>
+        <zerobus.sdk.version>1.6.0</zerobus.sdk.version>
     </properties>
 
     <dependencyManagement>
@@ -45,7 +46,7 @@
             <dependency>
                 <groupId>org.apache.nifi</groupId>
                 <artifactId>nifi-api</artifactId>
-                <version>${nifi.version}</version>
+                <version>${nifi-api.version}</version>
                 <scope>provided</scope>
             </dependency>
             <dependency>
