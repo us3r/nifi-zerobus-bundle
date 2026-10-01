@@ -39,6 +39,8 @@
         <!-- nifi-api is released separately since NiFi 2.x; NiFi 2.9.0 ships nifi-api 2.8.0 -->
         <nifi-api.version>2.8.0</nifi-api.version>
         <zerobus.sdk.version>1.6.0</zerobus.sdk.version>
+        <!-- The Zerobus SDK is compiled against Arrow 17.0.0 and does not bundle it -->
+        <arrow.version>17.0.0</arrow.version>
     </properties>
 
     <dependencyManagement>

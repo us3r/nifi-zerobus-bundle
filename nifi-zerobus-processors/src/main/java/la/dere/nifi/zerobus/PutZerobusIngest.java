@@ -55,8 +55,9 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <h3>JNI classloader note</h3>
  * The Zerobus SDK uses Rust via JNI. Native threads spawned by Rust don't inherit
- * NiFi's NAR classloader, so we set TCCL before every SDK interaction. The Dockerfile
- * also places the SDK JAR on NiFi's system classpath as a belt-and-suspenders measure.
+ * NiFi's NAR classloader, so we set TCCL before every SDK interaction. Since SDK 1.x
+ * the native side also caches its class references on load, so the SDK JAR no longer
+ * needs to sit on NiFi's system classpath.
  * Yes, classloader issues in NiFi are basically a rite of passage.
  */
 @Tags({"databricks", "zerobus", "delta", "lakehouse", "ingest", "streaming"})
@@ -196,7 +197,7 @@ public class PutZerobusIngest extends AbstractProcessor {
     }
 
     // Appended to the SDK's user-agent so Databricks can tell who is calling
-    private static final String APPLICATION_NAME = "nifi-zerobus";
+    static final String APPLICATION_NAME = "nifi-zerobus";
 
     // Guards stream lifecycle: create, recreate, close.
     // onTrigger grabs a local reference under this lock, then releases it
@@ -521,7 +522,7 @@ public class PutZerobusIngest extends AbstractProcessor {
      * The Zerobus SDK loves wrapping exceptions like a Russian nesting doll —
      * this peels them until we find the real cause.
      */
-    private static Throwable unwrap(Throwable t) {
+    static Throwable unwrap(Throwable t) {
         while (t instanceof CompletionException && t.getCause() != null) {
             t = t.getCause();
         }
