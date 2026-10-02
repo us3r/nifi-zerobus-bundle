@@ -16,8 +16,8 @@ Features:
 
 ## Requirements
 
-- Apache NiFi 1.20+
-- Java 11+
+- Apache NiFi 2.12.0 (for NiFi 1.x use the `main` branch)
+- Java 21+
 - Databricks workspace with Zerobus Ingest enabled
 - Service principal with `MODIFY` + `SELECT` on the target table
 
@@ -27,30 +27,37 @@ Features:
 mvn clean package -DskipTests
 ```
 
-The NAR file will be at `nifi-zerobus-nar/target/nifi-zerobus-nar-0.1.0.nar`.
+The NAR file will be at `nifi-zerobus-nar/target/nifi-zerobus-nar-2.12.0.nar`.
 
 ## Install
 
 Copy the NAR to NiFi's `lib/` directory and restart:
 
 ```bash
-cp nifi-zerobus-nar/target/nifi-zerobus-nar-0.1.0.nar $NIFI_HOME/lib/
+cp nifi-zerobus-nar/target/nifi-zerobus-nar-2.12.0.nar $NIFI_HOME/lib/
 $NIFI_HOME/bin/nifi.sh restart
 ```
 
 On Kubernetes (recommended — bake into image):
 
 ```dockerfile
-FROM apache/nifi:1.28.1
-COPY nifi-zerobus-nar-0.1.0.nar /opt/nifi/nifi-current/lib/
+FROM apache/nifi:2.12.0
+COPY nifi-zerobus-nar-2.12.0.nar /opt/nifi/nifi-current/lib/
 ```
 
 ```bash
-docker build -t nifi-zerobus:1.28.1 .
-kubectl -n <namespace> set image deployment/nifi nifi=nifi-zerobus:1.28.1
+docker build -t nifi-zerobus:2.12.0 .
+kubectl -n <namespace> set image deployment/nifi nifi=nifi-zerobus:2.12.0
 ```
 
-> **Apple Silicon (ARM64):** The Zerobus SDK ships native libraries for `linux-x86_64` only. On ARM64 hosts (OrbStack, Rancher Desktop on Apple Silicon), you must build the image with `--platform linux/amd64` and enable Rosetta emulation in your container runtime. Without this, the processor will fail with `UnsatisfiedLinkError: libzerobus_jni.so`. Production x86_64 clusters are unaffected.
+> **Arrow needs a JVM flag:** `PutZerobusRecord` uses Apache Arrow, which requires reflective access to `java.nio` on Java 21. Add this line to `conf/bootstrap.conf` (the bundled `Dockerfile.nifi` does it for you), otherwise the processor refuses to start:
+>
+> ```
+> java.arg.arrowAddOpens=--add-opens=java.base/java.nio=ALL-UNNAMED
+> ```
+> `PutZerobusIngest` works without it.
+
+> **ARM64 (Apple Silicon, Graviton):** Zerobus SDK 1.6.0 ships native libraries for `linux-x86_64` and `linux-aarch64` (glibc and musl), so the image runs natively on both architectures — no `--platform linux/amd64` or Rosetta emulation needed.
 
 ## Configuration
 
@@ -72,7 +79,41 @@ The processor accepts JSON FlowFiles (one JSON object or array per FlowFile). A 
 
 > **Note:** The Zerobus SDK also supports Protocol Buffers via `ZerobusProtoStream`. This processor currently uses the JSON stream. If you need Protobuf ingestion (higher throughput, stricter typing), open an issue or PR.
 
-For non-JSON sources, use NiFi's `ConvertRecord` processor upstream to transform to JSON first.
+For non-JSON sources, use **PutZerobusRecord** (below) instead.
+
+## PutZerobusRecord (Arrow)
+
+**PutZerobusRecord** reads FlowFiles with any NiFi Record Reader (Avro, CSV, JSON, Parquet, ...), packs the records into Apache Arrow batches and ingests them over the Zerobus Arrow Flight path. One FlowFile may hold many records.
+
+It shares the five connection properties and `ACK Wait Timeout` with PutZerobusIngest, plus:
+
+| Property | Required | Default | Description |
+|----------|----------|---------|-------------|
+| **Record Reader** | Yes | — | Controller Service that parses the FlowFile and supplies the schema |
+| Records Per Batch | No | 10000 | Max records per Arrow batch |
+| Max Inflight Batches | No | 1000 | Backpressure threshold |
+| IPC Compression | No | NONE | `NONE`, `LZ4_FRAME` or `ZSTD` |
+
+The record schema must match the target table — field names and types are sent as-is:
+
+| NiFi record type | Arrow type sent | Delta type |
+|---|---|---|
+| BYTE / SHORT / INT / LONG | `Int8` / `Int16` / `Int32` / `Int64` | TINYINT / SMALLINT / INT / BIGINT |
+| FLOAT / DOUBLE | `Float32` / `Float64` | FLOAT / DOUBLE |
+| BOOLEAN | `Boolean` | BOOLEAN |
+| STRING, CHAR, ENUM, UUID, TIME | `LargeUtf8` | STRING |
+| DECIMAL | `LargeUtf8` (as text) | DECIMAL |
+| DATE | `Date32` | DATE |
+| TIMESTAMP | `Timestamp(Microsecond, UTC)` | TIMESTAMP |
+| ARRAY\<BYTE\> | `LargeBinary` | BINARY |
+| ARRAY / MAP / RECORD | `List` / `Map` / struct | ARRAY / MAP / STRUCT |
+
+Things to know:
+
+- **Use an explicit schema.** Inferred schemas (e.g. JsonTreeReader with "Infer Schema") guess `LONG` for every integer and may produce `CHOICE` types, which are rejected. `TIMESTAMP_NTZ` and `VARIANT` columns are not supported.
+- **The stream is opened on the first FlowFile**, because the Arrow schema comes from the Record Reader. Bad credentials therefore show up on the first FlowFile, not at processor start. A schema change reopens the stream.
+- **At-least-once.** If a FlowFile fails partway, batches already sent may be ingested and a retry sends them again.
+- **Runs single-threaded** (`@TriggerSerially`) — the SDK's Arrow stream is not thread-safe.
 
 ## Example Flow
 

@@ -2,13 +2,13 @@ package la.dere.nifi.zerobus;
 
 import org.apache.nifi.util.TestRunner;
 import org.apache.nifi.util.TestRunners;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Unit tests for PutZerobusIngest processor.
@@ -26,7 +26,7 @@ public class PutZerobusIngestTest {
 
     private TestRunner runner;
 
-    @Before
+    @BeforeEach
     public void setUp() {
         runner = TestRunners.newTestRunner(PutZerobusIngest.class);
     }
@@ -35,7 +35,7 @@ public class PutZerobusIngestTest {
 
     @Test
     public void testProcessorLoads() {
-        assertNotNull("Processor should instantiate without errors", runner.getProcessor());
+        assertNotNull(runner.getProcessor(), "Processor should instantiate without errors");
     }
 
     // ── Property validation ─────────────────────────────────────────────────────
@@ -108,8 +108,8 @@ public class PutZerobusIngestTest {
 
     @Test
     public void testRelationships() {
-        assertEquals("Should have exactly 3 relationships", 3,
-                runner.getProcessor().getRelationships().size());
+        assertEquals(3, runner.getProcessor().getRelationships().size(),
+                "Should have exactly 3 relationships");
         assertTrue(runner.getProcessor().getRelationships()
                 .contains(PutZerobusIngest.REL_SUCCESS));
         assertTrue(runner.getProcessor().getRelationships()

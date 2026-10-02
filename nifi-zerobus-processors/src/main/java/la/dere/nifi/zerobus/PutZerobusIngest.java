@@ -2,7 +2,6 @@ package la.dere.nifi.zerobus;
 
 import com.databricks.zerobus.AckCallback;
 import com.databricks.zerobus.NonRetriableException;
-import com.databricks.zerobus.StreamConfigurationOptions;
 import com.databricks.zerobus.ZerobusJsonStream;
 import com.databricks.zerobus.ZerobusSdk;
 
@@ -56,8 +55,9 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <h3>JNI classloader note</h3>
  * The Zerobus SDK uses Rust via JNI. Native threads spawned by Rust don't inherit
- * NiFi's NAR classloader, so we set TCCL before every SDK interaction. The Dockerfile
- * also places the SDK JAR on NiFi's system classpath as a belt-and-suspenders measure.
+ * NiFi's NAR classloader, so we set TCCL before every SDK interaction. Since SDK 1.x
+ * the native side also caches its class references on load, so the SDK JAR no longer
+ * needs to sit on NiFi's system classpath.
  * Yes, classloader issues in NiFi are basically a rite of passage.
  */
 @Tags({"databricks", "zerobus", "delta", "lakehouse", "ingest", "streaming"})
@@ -196,6 +196,9 @@ public class PutZerobusIngest extends AbstractProcessor {
         RELATIONSHIPS = Collections.unmodifiableSet(rels);
     }
 
+    // Appended to the SDK's user-agent so Databricks can tell who is calling
+    static final String APPLICATION_NAME = "nifi-zerobus";
+
     // Guards stream lifecycle: create, recreate, close.
     // onTrigger grabs a local reference under this lock, then releases it
     // before the actual I/O — so we don't hold the lock during network calls.
@@ -243,36 +246,40 @@ public class PutZerobusIngest extends AbstractProcessor {
         final ClassLoader original = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(this.getClass().getClassLoader());
         try {
-            sdk = new ZerobusSdk(endpoint, workspace);
+            sdk = new ZerobusSdk(endpoint, workspace, APPLICATION_NAME);
 
-            StreamConfigurationOptions options = StreamConfigurationOptions.builder()
-                    .setMaxInflightRecords(maxInflight)
-                    .setRecovery(true)
-                    .setRecoveryRetries(5)
-                    .setRecoveryTimeoutMs(30000)
-                    .setRecoveryBackoffMs(3000)
-                    .setAckCallback(new AckCallback() {
-                        @Override
-                        public void onAck(long offsetId) {
-                            // Stream recovered (if there was an error) — clear the flag
-                            lastAsyncError.set(null);
-                            getLogger().debug("Zerobus ACK for offset {}", new Object[]{offsetId});
-                        }
+            final AckCallback ackCallback = new AckCallback() {
+                @Override
+                public void onAck(long offsetId) {
+                    // Stream recovered (if there was an error) — clear the flag
+                    lastAsyncError.set(null);
+                    getLogger().debug("Zerobus ACK for offset {}", new Object[]{offsetId});
+                }
 
-                        @Override
-                        public void onError(long offsetId, String message) {
-                            // Stash the error for onTrigger to pick up.
-                            // A smoke detector that only writes to a journal
-                            // protects nobody — so we surface this proactively.
-                            lastAsyncError.set("offset=" + offsetId + ": " + message);
-                            getLogger().warn("Zerobus async error for offset {}: {}",
-                                    new Object[]{offsetId, message});
-                        }
-                    })
-                    .build();
+                @Override
+                public void onError(long offsetId, String message) {
+                    // Stash the error for onTrigger to pick up.
+                    // A smoke detector that only writes to a journal
+                    // protects nobody — so we surface this proactively.
+                    lastAsyncError.set("offset=" + offsetId + ": " + message);
+                    getLogger().warn("Zerobus async error for offset {}: {}",
+                            new Object[]{offsetId, message});
+                }
+            };
 
             synchronized (streamLock) {
-                stream = sdk.createJsonStream(table, clientId, clientSecret, options).join();
+                stream = sdk.streamBuilder()
+                        .table(table)
+                        .oauth(clientId, clientSecret)
+                        .maxInflightRecords(maxInflight)
+                        .recovery(true)
+                        .recoveryRetries(5)
+                        .recoveryTimeoutMs(30000)
+                        .recoveryBackoffMs(3000)
+                        .ackCallback(ackCallback)
+                        .json()
+                        .build()
+                        .join();
             }
             lastAsyncError.set(null);
             getLogger().info("Zerobus stream opened successfully to {}", new Object[]{table});
@@ -515,7 +522,7 @@ public class PutZerobusIngest extends AbstractProcessor {
      * The Zerobus SDK loves wrapping exceptions like a Russian nesting doll —
      * this peels them until we find the real cause.
      */
-    private static Throwable unwrap(Throwable t) {
+    static Throwable unwrap(Throwable t) {
         while (t instanceof CompletionException && t.getCause() != null) {
             t = t.getCause();
         }
