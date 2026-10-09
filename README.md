@@ -16,7 +16,7 @@ Features:
 
 ## Requirements
 
-- Apache NiFi 2.12.0 (for NiFi 1.x use the `main` branch)
+- Apache NiFi 2.12.0 (for NiFi 1.x use release [v1.28.1-2](https://github.com/us3r/nifi-zerobus-bundle/releases/tag/v1.28.1-2))
 - Java 21+
 - Databricks workspace with Zerobus Ingest enabled
 - Service principal with `MODIFY` + `SELECT` on the target table
