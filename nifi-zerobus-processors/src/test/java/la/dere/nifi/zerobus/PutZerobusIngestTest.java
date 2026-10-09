@@ -5,6 +5,11 @@ import org.apache.nifi.util.TestRunners;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.OptionalLong;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -185,6 +190,122 @@ public class PutZerobusIngestTest {
     public void testLooksLikeJson_mismatchedBraces() {
         // Starts like JSON, ends like... not JSON
         assertFalse(PutZerobusIngest.looksLikeJson("{\"key\": \"value\"]"));
+    }
+
+    // ── Delivery guarantee ──────────────────────────────────────────────────────
+
+    @Test
+    public void testDefaultDeliveryGuarantee() {
+        configureRequiredProperties();
+        runner.assertValid();
+        assertEquals("guaranteed", runner.getProcessContext()
+                .getProperty(PutZerobusIngest.DELIVERY_GUARANTEE).getValue());
+    }
+
+    @Test
+    public void testBestEffortDeliveryGuarantee() {
+        configureRequiredProperties();
+        runner.setProperty(PutZerobusIngest.DELIVERY_GUARANTEE, "best-effort");
+        runner.assertValid();
+    }
+
+    @Test
+    public void testInvalidDeliveryGuarantee() {
+        configureRequiredProperties();
+        runner.setProperty(PutZerobusIngest.DELIVERY_GUARANTEE, "maybe");
+        runner.assertNotValid();
+    }
+
+    // ── Chunking by size ────────────────────────────────────────────────────────
+
+    @Test
+    public void testChunkBySize_empty() {
+        assertTrue(PutZerobusIngest.chunkBySize(Collections.emptyList(), 100).isEmpty());
+    }
+
+    @Test
+    public void testChunkBySize_fitsInOneChunk() {
+        final List<int[]> chunks = PutZerobusIngest.chunkBySize(List.of(10L, 10L, 10L), 100);
+        assertEquals(1, chunks.size());
+        assertEquals(0, chunks.get(0)[0]);
+        assertEquals(3, chunks.get(0)[1]);
+    }
+
+    @Test
+    public void testChunkBySize_splitsAndKeepsOrder() {
+        // each record costs 40 + overhead, so two fit under 100 and a third does not
+        final List<int[]> chunks = PutZerobusIngest.chunkBySize(List.of(40L, 40L, 40L, 40L, 40L), 100);
+        assertEquals(3, chunks.size());
+        assertEquals(0, chunks.get(0)[0]);
+        assertEquals(2, chunks.get(0)[1]);
+        assertEquals(2, chunks.get(1)[0]);
+        assertEquals(4, chunks.get(1)[1]);
+        assertEquals(4, chunks.get(2)[0]);
+        assertEquals(5, chunks.get(2)[1]);
+    }
+
+    @Test
+    public void testChunkBySize_oversizedRecordGetsItsOwnChunk() {
+        final List<int[]> chunks = PutZerobusIngest.chunkBySize(List.of(10L, 500L, 10L), 100);
+        assertEquals(3, chunks.size());
+        assertEquals(1, chunks.get(1)[0]);
+        assertEquals(2, chunks.get(1)[1]);
+    }
+
+    @Test
+    public void testChunkBySize_staysUnderZerobusMessageLimit() {
+        // 10 000 records of 1 KB is ~10 MB: too close to the 10 MB message limit for one batch
+        final List<Long> sizes = new ArrayList<>(Collections.nCopies(10_000, 1_000L));
+        final List<int[]> chunks = PutZerobusIngest.chunkBySize(sizes, PutZerobusIngest.MAX_BATCH_BYTES);
+        assertEquals(2, chunks.size());
+        for (int[] chunk : chunks) {
+            assertTrue((chunk[1] - chunk[0]) * 1_000L < 10L * 1024 * 1024);
+        }
+        assertEquals(10_000, chunks.get(1)[1]);
+    }
+
+    // ── In-flight tracking ──────────────────────────────────────────────────────
+
+    @Test
+    public void testInflight_fitsUnderLimit() {
+        final PutZerobusIngest.InflightTracker tracker = new PutZerobusIngest.InflightTracker();
+        tracker.sent(1, 100);
+        assertEquals(OptionalLong.empty(), tracker.offsetToWaitFor(100, 200));
+        assertEquals(100, tracker.pendingRecords());
+    }
+
+    @Test
+    public void testInflight_waitsForJustEnough() {
+        final PutZerobusIngest.InflightTracker tracker = new PutZerobusIngest.InflightTracker();
+        tracker.sent(1, 100);
+        tracker.sent(2, 100);
+        tracker.sent(3, 100);
+        // 300 pending, 100 incoming, limit 300: acknowledging offset 1 is enough
+        assertEquals(OptionalLong.of(1), tracker.offsetToWaitFor(100, 300));
+        // limit 150: offsets 1 to 3 all have to go
+        assertEquals(OptionalLong.of(3), tracker.offsetToWaitFor(100, 150));
+    }
+
+    @Test
+    public void testInflight_chunkLargerThanLimitWaitsForEmptyBuffer() {
+        final PutZerobusIngest.InflightTracker tracker = new PutZerobusIngest.InflightTracker();
+        assertEquals(OptionalLong.empty(), tracker.offsetToWaitFor(500, 100));
+        tracker.sent(7, 500);
+        assertEquals(OptionalLong.of(7), tracker.offsetToWaitFor(500, 100));
+    }
+
+    @Test
+    public void testInflight_ackIsCumulative() {
+        final PutZerobusIngest.InflightTracker tracker = new PutZerobusIngest.InflightTracker();
+        tracker.sent(1, 100);
+        tracker.sent(2, 100);
+        tracker.sent(3, 100);
+        tracker.acked(2);
+        assertEquals(100, tracker.pendingRecords());
+        tracker.acked(2);
+        assertEquals(100, tracker.pendingRecords());
+        tracker.clear();
+        assertEquals(0, tracker.pendingRecords());
     }
 
     // ── Helper ──────────────────────────────────────────────────────────────────

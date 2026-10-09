@@ -11,6 +11,7 @@ import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.annotation.documentation.Tags;
 import org.apache.nifi.annotation.lifecycle.OnScheduled;
 import org.apache.nifi.annotation.lifecycle.OnStopped;
+import org.apache.nifi.components.AllowableValue;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.processor.AbstractProcessor;
@@ -23,12 +24,14 @@ import org.apache.nifi.processor.util.StandardValidators;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -147,6 +150,22 @@ public class PutZerobusIngest extends AbstractProcessor {
             .addValidator(StandardValidators.TIME_PERIOD_VALIDATOR)
             .build();
 
+    static final AllowableValue DELIVERY_GUARANTEED = new AllowableValue("guaranteed", "Guarantee Delivery",
+            "FlowFiles are routed to success only after Zerobus has acknowledged the data as durable.");
+    static final AllowableValue DELIVERY_BEST_EFFORT = new AllowableValue("best-effort", "Best Effort",
+            "FlowFiles are routed to success as soon as the SDK has accepted the data, without waiting for the "
+            + "server acknowledgment. Higher throughput, but data that is still in flight when NiFi crashes or the "
+            + "stream fails for good is lost.");
+
+    public static final PropertyDescriptor DELIVERY_GUARANTEE = new PropertyDescriptor.Builder()
+            .name("delivery-guarantee")
+            .displayName("Delivery Guarantee")
+            .description("Whether to wait for the Zerobus server acknowledgment before routing FlowFiles to success.")
+            .required(true)
+            .allowableValues(DELIVERY_GUARANTEED, DELIVERY_BEST_EFFORT)
+            .defaultValue(DELIVERY_GUARANTEED.getValue())
+            .build();
+
     public static final PropertyDescriptor MAX_FLOWFILE_SIZE = new PropertyDescriptor.Builder()
             .name("max-flowfile-size")
             .displayName("Max FlowFile Size")
@@ -184,7 +203,7 @@ public class PutZerobusIngest extends AbstractProcessor {
 
     private static final List<PropertyDescriptor> PROPERTY_DESCRIPTORS = Collections.unmodifiableList(Arrays.asList(
             SERVER_ENDPOINT, WORKSPACE_URL, TABLE_NAME, CLIENT_ID, CLIENT_SECRET,
-            BATCH_SIZE, MAX_INFLIGHT, WAIT_TIMEOUT, MAX_FLOWFILE_SIZE
+            BATCH_SIZE, MAX_INFLIGHT, WAIT_TIMEOUT, DELIVERY_GUARANTEE, MAX_FLOWFILE_SIZE
     ));
 
     private static final Set<Relationship> RELATIONSHIPS;
@@ -199,6 +218,15 @@ public class PutZerobusIngest extends AbstractProcessor {
     // Appended to the SDK's user-agent so Databricks can tell who is calling
     static final String APPLICATION_NAME = "nifi-zerobus";
 
+    // Counter of acknowledged records, visible in NiFi's Counters view and Prometheus metrics
+    static final String COUNTER_RECORDS_INGESTED = "Records Ingested";
+
+    // Zerobus sends a JSON batch as a single message and rejects the whole batch if it is
+    // larger than 10 MB, so one trigger's records are split into chunks that stay below that.
+    static final long MAX_BATCH_BYTES = 9L * 1024 * 1024;
+    // Rough per-record framing cost inside a batch message
+    static final int RECORD_OVERHEAD_BYTES = 8;
+
     // Guards stream lifecycle: create, recreate, close.
     // onTrigger grabs a local reference under this lock, then releases it
     // before the actual I/O — so we don't hold the lock during network calls.
@@ -211,6 +239,10 @@ public class PutZerobusIngest extends AbstractProcessor {
     // Just logging them and hoping someone reads the log is not a strategy,
     // so we surface them on the next onTrigger invocation.
     private final AtomicReference<String> lastAsyncError = new AtomicReference<>();
+
+    // Records handed to the SDK and not yet acknowledged. The SDK's own in-flight limit
+    // counts ingest calls rather than records, so Max Inflight Records is enforced here.
+    private final InflightTracker inflight = new InflightTracker();
 
     @Override
     protected List<PropertyDescriptor> getSupportedPropertyDescriptors() {
@@ -253,6 +285,7 @@ public class PutZerobusIngest extends AbstractProcessor {
                 public void onAck(long offsetId) {
                     // Stream recovered (if there was an error) — clear the flag
                     lastAsyncError.set(null);
+                    inflight.acked(offsetId);
                     getLogger().debug("Zerobus ACK for offset {}", new Object[]{offsetId});
                 }
 
@@ -262,6 +295,8 @@ public class PutZerobusIngest extends AbstractProcessor {
                     // A smoke detector that only writes to a journal
                     // protects nobody — so we surface this proactively.
                     lastAsyncError.set("offset=" + offsetId + ": " + message);
+                    // It will never be acknowledged, so it must not hold back new records
+                    inflight.acked(offsetId);
                     getLogger().warn("Zerobus async error for offset {}: {}",
                             new Object[]{offsetId, message});
                 }
@@ -282,6 +317,7 @@ public class PutZerobusIngest extends AbstractProcessor {
                         .join();
             }
             lastAsyncError.set(null);
+            inflight.clear();
             getLogger().info("Zerobus stream opened successfully to {}", new Object[]{table});
         } catch (CompletionException e) {
             closeQuietly();
@@ -324,6 +360,8 @@ public class PutZerobusIngest extends AbstractProcessor {
         final int batchSize = context.getProperty(BATCH_SIZE).asInteger();
         final long waitTimeoutMs = context.getProperty(WAIT_TIMEOUT).asTimePeriod(TimeUnit.MILLISECONDS);
         final long maxSize = context.getProperty(MAX_FLOWFILE_SIZE).asDataSize(DataUnit.B).longValue();
+        final boolean waitForAck = DELIVERY_GUARANTEED.getValue().equals(context.getProperty(DELIVERY_GUARANTEE).getValue());
+        final int maxInflight = context.getProperty(MAX_INFLIGHT).asInteger();
 
         final List<FlowFile> flowFiles = session.get(batchSize);
         if (flowFiles == null || flowFiles.isEmpty()) {
@@ -348,6 +386,7 @@ public class PutZerobusIngest extends AbstractProcessor {
                 getLogger().warn("Zerobus stream is closed, attempting to recreate");
                 try {
                     stream = sdk.recreateStream(stream).join();
+                    inflight.clear();
                     getLogger().info("Zerobus stream recreated successfully");
                 } catch (Exception e) {
                     getLogger().error("Failed to recreate Zerobus stream: {}", new Object[]{e.getMessage()});
@@ -363,6 +402,7 @@ public class PutZerobusIngest extends AbstractProcessor {
         // before talking to the server — no point wasting a round trip on garbage.
         final List<String> records = new ArrayList<>(flowFiles.size());
         final List<FlowFile> validFiles = new ArrayList<>(flowFiles.size());
+        final List<Long> sizes = new ArrayList<>(flowFiles.size());
         final List<FlowFile> rejected = new ArrayList<>();
 
         for (FlowFile ff : flowFiles) {
@@ -392,6 +432,7 @@ public class PutZerobusIngest extends AbstractProcessor {
 
             records.add(content);
             validFiles.add(ff);
+            sizes.add(ff.getSize());
         }
 
         // Route the rejects before we talk to the server
@@ -403,28 +444,65 @@ public class PutZerobusIngest extends AbstractProcessor {
             return;
         }
 
-        // Ship it. The moment of truth — or at least the moment of network I/O.
+        // Ship it, one chunk at a time. Each chunk is a single all-or-nothing message for
+        // Zerobus, so a bad record only takes its own chunk down with it.
+        final List<FlowFile> sent = new ArrayList<>(validFiles.size());
+        long lastOffset = -1;
+        for (int[] chunk : chunkBySize(sizes, MAX_BATCH_BYTES)) {
+            final int from = chunk[0];
+            final int to = chunk[1];
+            final List<FlowFile> chunkFiles = validFiles.subList(from, to);
+            try {
+                // Backpressure: hold new records until enough of the earlier ones are acknowledged
+                final OptionalLong waitFor = inflight.offsetToWaitFor(to - from, maxInflight);
+                if (waitFor.isPresent()) {
+                    waitWithTimeout(localStream, waitFor.getAsLong(), waitTimeoutMs);
+                    inflight.acked(waitFor.getAsLong());
+                }
+                final Optional<Long> offset = localStream.ingestRecordsOffset(records.subList(from, to));
+                if (offset.isPresent()) {
+                    lastOffset = offset.get();
+                    inflight.sent(lastOffset, to - from);
+                }
+                sent.addAll(chunkFiles);
+
+            } catch (NonRetriableException e) {
+                // Schema mismatch, auth failure, etc. — no amount of retrying will fix this.
+                // Route to failure so the operator can investigate (and maybe fix the schema).
+                getLogger().error("Non-retriable Zerobus error: {}", new Object[]{e.getMessage()});
+                session.transfer(chunkFiles, REL_FAILURE);
+
+            } catch (Exception e) {
+                // Transient error — network blip, server restart, cosmic ray.
+                // The stream is in doubt, so this chunk and everything after it goes to retry.
+                getLogger().error("Transient Zerobus error: {}", new Object[]{unwrap(e).getMessage()});
+                session.transfer(validFiles.subList(from, validFiles.size()), REL_RETRY);
+                break;
+            }
+        }
+
+        if (sent.isEmpty()) {
+            return;
+        }
+
         try {
-            final Optional<Long> lastOffset = localStream.ingestRecordsOffset(records);
-            if (lastOffset.isPresent()) {
-                waitWithTimeout(localStream, lastOffset.get(), waitTimeoutMs);
+            // ACKs are ordered, so confirming the last chunk confirms them all
+            if (waitForAck && lastOffset >= 0) {
+                waitWithTimeout(localStream, lastOffset, waitTimeoutMs);
+                inflight.acked(lastOffset);
             }
 
-            session.transfer(validFiles, REL_SUCCESS);
-            getLogger().debug("Ingested {} records, last offset: {}",
-                    new Object[]{records.size(), lastOffset.orElse(-1L)});
+            session.adjustCounter(COUNTER_RECORDS_INGESTED, sent.size(), false);
+            session.transfer(sent, REL_SUCCESS);
+            getLogger().debug("Ingested {} records, last offset: {}", new Object[]{sent.size(), lastOffset});
 
         } catch (NonRetriableException e) {
-            // Schema mismatch, auth failure, etc. — no amount of retrying will fix this.
-            // Route to failure so the operator can investigate (and maybe fix the schema).
             getLogger().error("Non-retriable Zerobus error: {}", new Object[]{e.getMessage()});
-            session.transfer(validFiles, REL_FAILURE);
+            session.transfer(sent, REL_FAILURE);
 
         } catch (Exception e) {
-            // Transient error — network blip, server restart, cosmic ray.
-            // Route to retry and hope for the best.
             getLogger().error("Transient Zerobus error: {}", new Object[]{unwrap(e).getMessage()});
-            session.transfer(validFiles, REL_RETRY);
+            session.transfer(sent, REL_RETRY);
         }
     }
 
@@ -467,6 +545,83 @@ public class PutZerobusIngest extends AbstractProcessor {
     }
 
     /**
+     * Splits records into consecutive chunks whose total size stays within {@code maxBytes}.
+     * Returns {@code [from, to)} index pairs. A record larger than the limit gets a chunk
+     * of its own — the server will have the final word on that one.
+     */
+    static List<int[]> chunkBySize(final List<Long> sizes, final long maxBytes) {
+        final List<int[]> chunks = new ArrayList<>();
+        int from = 0;
+        long bytes = 0;
+        for (int i = 0; i < sizes.size(); i++) {
+            final long size = sizes.get(i) + RECORD_OVERHEAD_BYTES;
+            if (i > from && bytes + size > maxBytes) {
+                chunks.add(new int[]{from, i});
+                from = i;
+                bytes = 0;
+            }
+            bytes += size;
+        }
+        if (from < sizes.size()) {
+            chunks.add(new int[]{from, sizes.size()});
+        }
+        return chunks;
+    }
+
+    /**
+     * Keeps count of the records that were handed to the SDK and are still waiting
+     * for their acknowledgment, so the processor can stop feeding a stream that is
+     * falling behind instead of letting the SDK buffer grow without limit.
+     */
+    static final class InflightTracker {
+        // {offset, record count}, in the order the chunks were sent
+        private final ArrayDeque<long[]> pending = new ArrayDeque<>();
+        private long pendingRecords;
+
+        synchronized void sent(final long offset, final int records) {
+            pending.addLast(new long[]{offset, records});
+            pendingRecords += records;
+        }
+
+        /** Acknowledgments are cumulative: this offset and everything before it is done. */
+        synchronized void acked(final long offset) {
+            while (!pending.isEmpty() && pending.peekFirst()[0] <= offset) {
+                pendingRecords -= pending.pollFirst()[1];
+            }
+        }
+
+        synchronized void clear() {
+            pending.clear();
+            pendingRecords = 0;
+        }
+
+        synchronized long pendingRecords() {
+            return pendingRecords;
+        }
+
+        /**
+         * The offset that has to be acknowledged before {@code incoming} more records fit
+         * under {@code limit}, or empty if they fit right now. If they can never fit,
+         * that is the last pending offset: send into an empty buffer and move on.
+         */
+        synchronized OptionalLong offsetToWaitFor(final int incoming, final int limit) {
+            if (pending.isEmpty() || pendingRecords + incoming <= limit) {
+                return OptionalLong.empty();
+            }
+            long remaining = pendingRecords;
+            long offset = -1;
+            for (long[] entry : pending) {
+                offset = entry[0];
+                remaining -= entry[1];
+                if (remaining + incoming <= limit) {
+                    break;
+                }
+            }
+            return OptionalLong.of(offset);
+        }
+    }
+
+    /**
      * Quick structural check: does this string look like it could be JSON?
      *
      * Not a full parse — that would require adding a JSON library dependency
@@ -500,6 +655,13 @@ public class PutZerobusIngest extends AbstractProcessor {
      */
     private void closeQuietly() {
         if (stream != null) {
+            try {
+                // Best Effort delivery leaves records in flight; push them out before closing
+                stream.flush();
+            } catch (Exception e) {
+                getLogger().warn("Error flushing Zerobus stream, unacknowledged records may be lost: {}",
+                        new Object[]{e.getMessage()});
+            }
             try {
                 stream.close();
             } catch (Exception e) {

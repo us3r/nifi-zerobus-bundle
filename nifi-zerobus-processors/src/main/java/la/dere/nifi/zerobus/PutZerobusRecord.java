@@ -143,7 +143,7 @@ public class PutZerobusRecord extends AbstractProcessor {
             PutZerobusIngest.SERVER_ENDPOINT, PutZerobusIngest.WORKSPACE_URL, PutZerobusIngest.TABLE_NAME,
             PutZerobusIngest.CLIENT_ID, PutZerobusIngest.CLIENT_SECRET,
             RECORD_READER, RECORDS_PER_BATCH, MAX_INFLIGHT_BATCHES, IPC_COMPRESSION,
-            PutZerobusIngest.WAIT_TIMEOUT
+            PutZerobusIngest.WAIT_TIMEOUT, PutZerobusIngest.DELIVERY_GUARANTEE
     );
 
     private static final Set<Relationship> RELATIONSHIPS = Set.of(REL_SUCCESS, REL_FAILURE, REL_RETRY);
@@ -242,6 +242,7 @@ public class PutZerobusRecord extends AbstractProcessor {
         try {
             final long recordCount = ingest(context, session, flowFile);
             flowFile = session.putAttribute(flowFile, "record.count", String.valueOf(recordCount));
+            session.adjustCounter(PutZerobusIngest.COUNTER_RECORDS_INGESTED, recordCount, false);
             session.getProvenanceReporter().send(flowFile, transitUri(context));
             session.transfer(flowFile, REL_SUCCESS);
             getLogger().debug("Ingested {} records from {}", recordCount, flowFile);
@@ -306,8 +307,11 @@ public class PutZerobusRecord extends AbstractProcessor {
             }
         }
 
+        final boolean waitForAck = PutZerobusIngest.DELIVERY_GUARANTEED.getValue()
+                .equals(context.getProperty(PutZerobusIngest.DELIVERY_GUARANTEE).getValue());
+
         // ACKs are ordered, so confirming the last batch confirms them all
-        if (lastOffset.isPresent()) {
+        if (waitForAck && lastOffset.isPresent()) {
             waitWithTimeout(localStream, lastOffset.get(), waitTimeoutMs);
         }
         return recordCount;
@@ -401,6 +405,13 @@ public class PutZerobusRecord extends AbstractProcessor {
     /** Must be called under {@link #streamLock}. */
     private void closeStreamQuietly() {
         if (stream != null) {
+            try {
+                // Best Effort delivery leaves batches in flight; push them out before closing
+                stream.flush();
+            } catch (Exception e) {
+                getLogger().warn("Error flushing Zerobus Arrow stream, unacknowledged batches may be lost: {}",
+                        e.getMessage());
+            }
             try {
                 stream.close();
             } catch (Exception e) {
