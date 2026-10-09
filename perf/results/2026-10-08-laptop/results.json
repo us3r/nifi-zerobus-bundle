@@ -1,0 +1,26 @@
+{
+  "A PutZerobusIngest (JSON)": {
+    "start_ms": 1791488041698,
+    "end_ms": 1791488349200,
+    "records": 4161000,
+    "avg_rec_s_generating": 13782,
+    "steady_avg_rec_s": 13872,
+    "steady_min": 11982,
+    "steady_max": 14987,
+    "failure": 0,
+    "retry": 0,
+    "left_in_queue": 0
+  },
+  "B PutZerobusRecord (Arrow)": {
+    "start_ms": 1791488374247,
+    "end_ms": 1791488691875,
+    "records": 5190000,
+    "avg_rec_s_generating": 16604,
+    "steady_avg_rec_s": 16721,
+    "steady_min": 15962,
+    "steady_max": 16985,
+    "failure": 0,
+    "retry": 0,
+    "left_in_queue": 0
+  }
+}

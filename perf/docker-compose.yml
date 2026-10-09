@@ -1,0 +1,68 @@
+# Local performance-test stack: NiFi with the Zerobus NAR, Prometheus and Grafana.
+# Build the NAR first (mvn clean package), then: docker compose -f perf/docker-compose.yml up -d --build
+#
+# NiFi runs over plain HTTP with no authentication so Prometheus can scrape it
+# without tokens. Every port is bound to 127.0.0.1 only — do not expose this stack.
+name: zerobus-perf
+
+services:
+  nifi:
+    build:
+      context: ..
+      dockerfile: Dockerfile.nifi
+    image: nifi-zerobus:2.12.0
+    entrypoint: ["/opt/nifi/scripts/start-http.sh"]
+    environment:
+      NIFI_JVM_HEAP_INIT: 2g
+      NIFI_JVM_HEAP_MAX: 4g
+    ports:
+      - "127.0.0.1:8088:8080"
+    volumes:
+      - ./nifi/start-http.sh:/opt/nifi/scripts/start-http.sh:ro
+      - nifi-conf:/opt/nifi/nifi-current/conf
+      # Extra NARs (e.g. nifi-parquet-nar for ParquetReader) and test data, both optional
+      - ./nars:/opt/nifi/nifi-current/extensions:ro
+      # not read-only: GetFile refuses directories it cannot write to, even with Keep Source File
+      - ./data:/data
+
+  # Re-exports NiFi's cumulative processor counters, see exporter/counters_exporter.py
+  counters-exporter:
+    image: python:3.13-alpine
+    command: ["python", "-u", "/exporter/counters_exporter.py"]
+    volumes:
+      - ./exporter:/exporter:ro
+
+  prometheus:
+    image: prom/prometheus:v3.10.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:12.4.1
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      # Lets Grafana export panels and dashboards as PNG (Share > Export as image, or /render/...)
+      GF_RENDERING_SERVER_URL: http://renderer:8081/render
+      GF_RENDERING_CALLBACK_URL: http://grafana:3000/
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+  renderer:
+    image: grafana/grafana-image-renderer:latest
+
+volumes:
+  nifi-conf:
+  prometheus-data:
+  grafana-data:

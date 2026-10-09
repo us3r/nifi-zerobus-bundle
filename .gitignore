@@ -9,3 +9,6 @@ target/
 .project
 .classpath
 .DS_Store
+
+# Performance-test data and third-party NARs (downloaded, see perf/README.md)
+perf/data/

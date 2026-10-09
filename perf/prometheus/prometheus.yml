@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+
+scrape_configs:
+  - job_name: nifi
+    metrics_path: /nifi-api/flow/metrics/prometheus
+    static_configs:
+      - targets: ["nifi:8080"]
+    # NiFi's own "instance" label is a UUID that changes on every restart
+    metric_relabel_configs:
+      - action: labeldrop
+        regex: exported_instance
+
+  - job_name: nifi-counters
+    static_configs:
+      - targets: ["counters-exporter:9100"]
