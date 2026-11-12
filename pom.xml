@@ -6,7 +6,7 @@
 
     <groupId>la.dere.nifi</groupId>
     <artifactId>nifi-zerobus-bundle</artifactId>
-    <version>2.12.0-2</version>
+    <version>2.12.0-3</version>
     <packaging>pom</packaging>
 
     <name>NiFi Zerobus Ingest Bundle</name>
@@ -38,7 +38,7 @@
         <nifi.version>2.12.0</nifi.version>
         <!-- nifi-api is released separately since NiFi 2.x; NiFi 2.12.0 ships nifi-api 2.12.0 -->
         <nifi-api.version>2.12.0</nifi-api.version>
-        <zerobus.sdk.version>1.6.0</zerobus.sdk.version>
+        <zerobus.sdk.version>1.8.1</zerobus.sdk.version>
         <!-- The Zerobus SDK is compiled against Arrow 17.0.0 and does not bundle it -->
         <arrow.version>17.0.0</arrow.version>
     </properties>
