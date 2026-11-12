@@ -111,10 +111,11 @@ public class PutZerobusRecord extends AbstractProcessor {
     public static final PropertyDescriptor IPC_COMPRESSION = new PropertyDescriptor.Builder()
             .name("ipc-compression")
             .displayName("IPC Compression")
-            .description("Compression applied to Arrow batches on the wire. Trades CPU for bandwidth.")
+            .description("Compression applied to Arrow batches on the wire. Trades CPU for bandwidth; "
+                    + "ZSTD usually raises throughput, because a stream is limited by the network rather than the CPU.")
             .required(false)
             .allowableValues(IPCCompressionType.class)
-            .defaultValue(IPCCompressionType.NONE.name())
+            .defaultValue(IPCCompressionType.ZSTD.name())
             .build();
 
     // ── Relationships ───────────────────────────────────────────────────────────

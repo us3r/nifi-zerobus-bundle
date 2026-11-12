@@ -51,7 +51,7 @@ public class PutZerobusRecordTest {
                 .getProperty(PutZerobusRecord.RECORDS_PER_BATCH).getValue());
         assertEquals("1000", runner.getProcessContext()
                 .getProperty(PutZerobusRecord.MAX_INFLIGHT_BATCHES).getValue());
-        assertEquals("NONE", runner.getProcessContext()
+        assertEquals("ZSTD", runner.getProcessContext()
                 .getProperty(PutZerobusRecord.IPC_COMPRESSION).getValue());
     }
 

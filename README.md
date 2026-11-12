@@ -27,14 +27,14 @@ Features:
 mvn clean package -DskipTests
 ```
 
-The NAR file will be at `nifi-zerobus-nar/target/nifi-zerobus-nar-2.12.0-2.nar`.
+The NAR file will be at `nifi-zerobus-nar/target/nifi-zerobus-nar-2.12.0-3.nar`.
 
 ## Install
 
 Copy the NAR to NiFi's `lib/` directory and restart:
 
 ```bash
-cp nifi-zerobus-nar/target/nifi-zerobus-nar-2.12.0-2.nar $NIFI_HOME/lib/
+cp nifi-zerobus-nar/target/nifi-zerobus-nar-2.12.0-3.nar $NIFI_HOME/lib/
 $NIFI_HOME/bin/nifi.sh restart
 ```
 
@@ -42,7 +42,7 @@ On Kubernetes (recommended — bake into image):
 
 ```dockerfile
 FROM apache/nifi:2.12.0
-COPY nifi-zerobus-nar-2.12.0-2.nar /opt/nifi/nifi-current/lib/
+COPY nifi-zerobus-nar-2.12.0-3.nar /opt/nifi/nifi-current/lib/
 ```
 
 ```bash
@@ -57,7 +57,7 @@ kubectl -n <namespace> set image deployment/nifi nifi=nifi-zerobus:2.12.0
 > ```
 > `PutZerobusIngest` works without it.
 
-> **ARM64 (Apple Silicon, Graviton):** Zerobus SDK 1.6.0 ships native libraries for `linux-x86_64` and `linux-aarch64` (glibc and musl), so the image runs natively on both architectures — no `--platform linux/amd64` or Rosetta emulation needed.
+> **ARM64 (Apple Silicon, Graviton):** Zerobus SDK 1.8.1 ships native libraries for `linux-x86_64` and `linux-aarch64` (glibc and musl), so the image runs natively on both architectures — no `--platform linux/amd64` or Rosetta emulation needed.
 
 ## Configuration
 
@@ -84,6 +84,13 @@ The processor accepts JSON FlowFiles (one JSON object or array per FlowFile). A 
 
 For non-JSON sources, use **PutZerobusRecord** (below) instead.
 
+**Rescue column (Beta, JSON only).** By default a record with a field that is not a column of the table, or a value of the wrong type, is rejected. To keep such records instead, add a nullable `VARIANT` column and tag it `zerobus-rescue`; the fields that do not fit land in that column as JSON. The tag takes up to 5 minutes to apply. See [Zerobus rescue column](https://docs.databricks.com/ingestion/zerobus-rescue-column).
+
+```sql
+ALTER TABLE catalog.schema.security_events ADD COLUMN rescue VARIANT;
+SET TAG ON COLUMN catalog.schema.security_events.rescue `zerobus-rescue`;
+```
+
 ## PutZerobusRecord (Arrow)
 
 **PutZerobusRecord** reads FlowFiles with any NiFi Record Reader (Avro, CSV, JSON, Parquet, ...), packs the records into Apache Arrow batches and ingests them over the Zerobus Arrow Flight path. One FlowFile may hold many records.
@@ -95,7 +102,7 @@ It shares the five connection properties, `ACK Wait Timeout` and `Delivery Guara
 | **Record Reader** | Yes | — | Controller Service that parses the FlowFile and supplies the schema |
 | Records Per Batch | No | 10000 | Max records per Arrow batch |
 | Max Inflight Batches | No | 1000 | Backpressure threshold |
-| IPC Compression | No | NONE | `NONE`, `LZ4_FRAME` or `ZSTD` |
+| IPC Compression | No | ZSTD | `NONE`, `LZ4_FRAME` or `ZSTD`. ZSTD is the default since 2.12.0-3 (and in the SDK since 1.8.0): a stream is limited by the network, so compression raises throughput. Set `NONE` only if the NiFi host is short on CPU. |
 
 The record schema must match the target table — field names and types are sent as-is:
 
@@ -182,6 +189,8 @@ https://<workspace-id>.zerobus.<region>.cloud.databricks.com
 ```
 
 The workspace ID is in your Databricks URL: `https://dbc-xxx.cloud.databricks.com/?o=<workspace-id>`
+
+4. **Network:** NiFi needs outbound HTTPS (443) to the Zerobus endpoint and to the workspace URL. Behind an HTTP proxy, set `https_proxy` (or `grpc_proxy`) and `no_proxy` in the **environment of the NiFi process**, e.g. in `bin/nifi-env.sh` or the container's environment. The SDK's native backend reads these variables; NiFi's and Java's proxy settings (`-Dhttps.proxyHost`) have no effect on it.
 
 ## Performance
 
